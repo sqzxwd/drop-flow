@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DropFlow — Локальный обмен файлами и буфер обмена</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: '#0f172a',
+                        card: '#1e293b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased selection:bg-indigo-500 selection:text-white">
+    <!-- Header -->
+    <header class="sticky top-0 z-30 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h1 class="text-lg font-bold tracking-tight text-white">DropFlow</h1>
+                        <span id="roomBadge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">general</span>
+                    </div>
+                    <p class="text-xs text-slate-400">Мгновенный обмен в локальной сети</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <!-- Connected peers -->
+                <div id="peersBadge" class="hidden sm:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
+                    <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                    <span id="peersCount">1</span>
+                </div>
+
+                <!-- QR button -->
+                <button id="qrOpenBtn" type="button" class="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 transition cursor-pointer">
+                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 4a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm12 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V4zM3 16a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zm13 0h2v2h-2v-2zm3 0h2v2h-2v-2zm-3 3h2v2h-2v-2zm3 3h2v-2h-2v2z" />
+                    </svg>
+                    <span>QR-код</span>
+                </button>
+
+                <!-- WebSocket status badge -->
+                <div id="wsStatusBadge" class="inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 transition-colors">
+                    <span id="wsStatusDot" class="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span>
+                    <span id="wsStatusText">Offline</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <!-- Top Grid: Upload & Shared Clipboard -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Drag & Drop Upload Zone -->
+            <section class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
+                <div>
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                            <svg class="w-5 h-5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                            </svg>
+                            Отправка файлов
+                        </h2>
+                        <span class="text-xs text-slate-400">Любой формат</span>
+                    </div>
+
+                    <div id="dropZone" class="relative group border-2 border-dashed border-slate-700 hover:border-indigo-500/70 rounded-xl p-8 text-center transition-all cursor-pointer bg-slate-950/50">
+                        <input id="fileInput" type="file" multiple class="hidden" />
+                        <div class="flex flex-col items-center gap-3 pointer-events-none">
+                            <div class="w-12 h-12 rounded-full bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                <svg class="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                </svg>
+                            </div>
+                            <div>
+                                <p class="text-sm font-medium text-slate-200">
+                                    Перетащите файлы сюда или <span class="text-indigo-400 underline decoration-indigo-400/50 underline-offset-2">выберите на устройстве</span>
+                                </p>
+                                <p class="text-xs text-slate-500 mt-1">Потоковая загрузка без ограничений по памяти</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Upload Progress Box -->
+                <div id="uploadProgressBox" class="hidden mt-4 p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                    <div class="flex items-center justify-between text-xs">
+                        <span id="uploadFileName" class="text-slate-200 font-medium truncate max-w-[70%]">Загрузка...</span>
+                        <span id="uploadPercent" class="text-indigo-400 font-mono font-semibold">0%</span>
+                    </div>
+                    <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div id="uploadProgressBar" class="h-full bg-gradient-to-r from-indigo-500 via-cyan-500 to-emerald-500 transition-all duration-150" style="width: 0%"></div>
+                    </div>
+                    <div class="flex items-center justify-between text-[11px] text-slate-400">
+                        <span id="uploadBytes">0 B / 0 B</span>
+                        <span id="uploadStatus">Передача...</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Shared Clipboard Section -->
+            <section class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 flex flex-col shadow-xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                        <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                        </svg>
+                        Общий буфер обмена
+                    </h2>
+                    <span class="text-xs text-slate-400">Ctrl+Enter для отправки</span>
+                </div>
+
+                <div class="space-y-3">
+                    <textarea
+                        id="clipboardInput"
+                        rows="3"
+                        placeholder="Вставьте текст, ссылку или фрагмент кода..."
+                        class="w-full rounded-xl bg-slate-950/80 border border-slate-800 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/40 text-sm text-slate-100 placeholder-slate-500 p-3 resize-none outline-none transition"
+                    ></textarea>
+
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex items-center gap-2">
+                            <button id="sendClipboardBtn" type="button" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-semibold transition shadow-lg shadow-indigo-600/20 cursor-pointer">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                </svg>
+                                Отправить
+                            </button>
+                            <button id="copyInputBtn" type="button" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition cursor-pointer">
+                                <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                <span>Копировать</span>
+                            </button>
+                        </div>
+                        <button id="clearClipboardInputBtn" type="button" class="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 transition cursor-pointer">
+                            Очистить
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Latest / History Clipboard -->
+                <div class="mt-4 pt-4 border-t border-slate-800/80 flex-1 flex flex-col min-h-0">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-medium text-slate-400">История буфера</span>
+                        <span id="clipboardHistoryCount" class="text-[11px] text-slate-500">0 записей</span>
+                    </div>
+                    <div id="clipboardHistoryList" class="space-y-2 max-h-44 overflow-y-auto pr-1">
+                        <p class="text-xs text-slate-500 italic py-4 text-center">Буфер обмена пока пуст</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Received Files List -->
+        <section class="bg-slate-900/70 border border-slate-800 rounded-2xl p-5 shadow-xl">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+                <div class="flex items-center gap-2.5">
+                    <h2 class="text-base font-semibold text-white flex items-center gap-2">
+                        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        Полученные файлы
+                    </h2>
+                    <span id="filesCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">0</span>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <input
+                        id="fileSearchInput"
+                        type="text"
+                        placeholder="Поиск файла..."
+                        class="text-xs rounded-lg bg-slate-950/80 border border-slate-800 focus:border-emerald-500 px-3 py-1.5 text-slate-200 placeholder-slate-500 outline-none transition w-44 sm:w-56"
+                    />
+                    <button id="refreshFilesBtn" type="button" title="Обновить список" class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition cursor-pointer">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <div id="filesListContainer" class="divide-y divide-slate-800/70">
+                <div class="py-10 text-center text-slate-500 text-sm">
+                    Файлов пока нет. Перетащите файлы в зону загрузки выше.
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- QR Code Modal -->
+    <div id="qrModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4">
+            <div class="flex items-center justify-between">
+                <h3 class="text-base font-semibold text-white">Подключение с телефона</h3>
+                <button id="qrCloseBtn" type="button" class="text-slate-400 hover:text-white cursor-pointer">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="bg-white rounded-xl p-4 flex items-center justify-center">
+                <img id="qrImage" src="/api/qr" alt="QR код подключения" class="w-48 h-48" />
+            </div>
+            <div class="text-center space-y-2">
+                <p id="qrUrlText" class="text-xs font-mono text-cyan-400 break-all bg-slate-950 px-3 py-2 rounded-lg border border-slate-800"></p>
+                <p class="text-xs text-slate-400">Отсканируйте QR-код камерой смартфона в той же Wi-Fi сети</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none"></div>
+
+    <script>
+        (() => {
+            // Persistent sender ID
+            let senderId = localStorage.getItem('dropflow_sender_id');
+            if (!senderId) {
+                senderId = 'dev_' + Math.random().toString(36).slice(2, 10);
+                localStorage.setItem('dropflow_sender_id', senderId);
+            }
+
+            const params = new URLSearchParams(window.location.search);
+            const room = params.get('room') || 'general';
+            document.getElementById('roomBadge').textContent = room;
+
+            // DOM refs
+            const wsStatusBadge = document.getElementById('wsStatusBadge');
+            const wsStatusDot = document.getElementById('wsStatusDot');
+            const wsStatusText = document.getElementById('wsStatusText');
+            const peersCountEl = document.getElementById('peersCount');
+
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+            const uploadProgressBox = document.getElementById('uploadProgressBox');
+            const uploadFileName = document.getElementById('uploadFileName');
+            const uploadPercent = document.getElementById('uploadPercent');
+            const uploadProgressBar = document.getElementById('uploadProgressBar');
+            const uploadBytes = document.getElementById('uploadBytes');
+            const uploadStatus = document.getElementById('uploadStatus');
+
+            const clipboardInput = document.getElementById('clipboardInput');
+            const sendClipboardBtn = document.getElementById('sendClipboardBtn');
+            const copyInputBtn = document.getElementById('copyInputBtn');
+            const clearClipboardInputBtn = document.getElementById('clearClipboardInputBtn');
+            const clipboardHistoryList = document.getElementById('clipboardHistoryList');
+            const clipboardHistoryCount = document.getElementById('clipboardHistoryCount');
+
+            const filesListContainer = document.getElementById('filesListContainer');
+            const filesCountBadge = document.getElementById('filesCountBadge');
+            const fileSearchInput = document.getElementById('fileSearchInput');
+            const refreshFilesBtn = document.getElementById('refreshFilesBtn');
+
+            const qrModal = document.getElementById('qrModal');
+            const qrOpenBtn = document.getElementById('qrOpenBtn');
+            const qrCloseBtn = document.getElementById('qrCloseBtn');
+            const qrImage = document.getElementById('qrImage');
+            const qrUrlText = document.getElementById('qrUrlText');
+            const toastContainer = document.getElementById('toastContainer');
+
+            let allFiles = [];
+            let clipboardHistory = [];
+            let ws = null;
+            let pingTimer = null;
+            let reconnectTimer = null;
+
+            // Utilities
+            function showToast(message, type = 'info') {
+                const colors = {
+                    info: 'bg-slate-800 border-slate-700 text-slate-100',
+                    success: 'bg-emerald-950/90 border-emerald-500/40 text-emerald-200',
+                    error: 'bg-rose-950/90 border-rose-500/40 text-rose-200',
+                };
+                const el = document.createElement('div');
+                el.className = `pointer-events-auto px-4 py-2.5 rounded-xl border text-xs font-medium shadow-lg backdrop-blur-md transition-all duration-300 ${colors[type] || colors.info}`;
+                el.textContent = message;
+                toastContainer.appendChild(el);
+                setTimeout(() => {
+                    el.classList.add('opacity-0', 'translate-y-2');
+                    setTimeout(() => el.remove(), 300);
+                }, 3000);
+            }
+
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            function escapeHtml(str) {
+                const div = document.createElement('div');
+                div.textContent = str;
+                return div.innerHTML;
+            }
+
+            async function copyTextToClipboard(text, btnEl = null) {
+                if (!text) {
+                    showToast('Нечего копировать', 'error');
+                    return;
+                }
+                try {
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(text);
+                    } else {
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.position = 'fixed';
+                        ta.style.left = '-9999px';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        ta.remove();
+                    }
+                    showToast('Скопировано в буфер обмена', 'success');
+                    if (btnEl) {
+                        const span = btnEl.querySelector('span') || btnEl;
+                        const orig = span.textContent;
+                        span.textContent = 'Скопировано!';
+                        setTimeout(() => { span.textContent = orig; }, 1500);
+                    }
+                } catch (err) {
+                    showToast('Ошибка копирования', 'error');
+                }
+            }
+
+            // WebSocket connection
+            function setOnlineState(online) {
+                if (online) {
+                    wsStatusBadge.className = 'inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 transition-colors';
+                    wsStatusDot.className = 'w-2 h-2 rounded-full bg-emerald-400';
+                    wsStatusText.textContent = 'Online';
+                } else {
+                    wsStatusBadge.className = 'inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 transition-colors';
+                    wsStatusDot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';
+                    wsStatusText.textContent = 'Offline';
+                }
+            }
+
+            function connectWebSocket() {
+                if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                    return;
+                }
+                const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${proto}//${window.location.host}/ws/${encodeURIComponent(room)}`;
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    setOnlineState(true);
+                    if (reconnectTimer) {
+                        clearTimeout(reconnectTimer);
+                        reconnectTimer = null;
+                    }
+                    if (pingTimer) clearInterval(pingTimer);
+                    pingTimer = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+                        }
+                    }, 25000);
+                };
+
+                ws.onmessage = (event) => {
+                    let msg;
+                    try {
+                        msg = JSON.parse(event.data);
+                    } catch {
+                        return;
+                    }
+
+                    switch (msg.type) {
+                        case 'init':
+                            peersCountEl.textContent = msg.client_count ?? 1;
+                            allFiles = msg.files || [];
+                            clipboardHistory = msg.clipboard_history || [];
+                            renderFiles();
+                            renderClipboardHistory();
+                            break;
+                        case 'peer_joined':
+                        case 'peer_left':
+                            peersCountEl.textContent = msg.client_count ?? 1;
+                            break;
+                        case 'file_uploaded':
+                            if (msg.file) {
+                                allFiles = [msg.file, ...allFiles.filter(f => f.name !== msg.file.name)];
+                                renderFiles();
+                                showToast(`Файл получен: ${msg.file.name}`, 'success');
+                            }
+                            break;
+                        case 'file_deleted':
+                            if (msg.filename) {
+                                allFiles = allFiles.filter(f => f.name !== msg.filename);
+                                renderFiles();
+                            }
+                            break;
+                        case 'files_list':
+                            allFiles = msg.files || [];
+                            renderFiles();
+                            break;
+                        case 'clipboard_update':
+                            if (msg.item) {
+                                clipboardHistory = [msg.item, ...clipboardHistory.filter(i => i.id !== msg.item.id)].slice(0, 50);
+                                renderClipboardHistory();
+                                if (msg.item.sender_id !== senderId) {
+                                    clipboardInput.value = msg.item.content;
+                                    showToast('Обновлен общий буфер обмена', 'info');
+                                }
+                            }
+                            break;
+                        case 'clipboard_rejected':
+                            showToast(`Отклонено: ${msg.reason}`, 'error');
+                            break;
+                    }
+                };
+
+                ws.onclose = () => {
+                    setOnlineState(false);
+                    if (pingTimer) {
+                        clearInterval(pingTimer);
+                        pingTimer = null;
+                    }
+                    reconnectTimer = setTimeout(connectWebSocket, 2500);
+                };
+
+                ws.onerror = () => {
+                    ws.close();
+                };
+            }
+
+            // Files rendering & actions
+            function renderFiles() {
+                const query = fileSearchInput.value.trim().toLowerCase();
+                const filtered = query
+                    ? allFiles.filter(f => f.name.toLowerCase().includes(query))
+                    : allFiles;
+
+                filesCountBadge.textContent = allFiles.length;
+
+                if (filtered.length === 0) {
+                    filesListContainer.innerHTML = `<div class="py-10 text-center text-slate-500 text-sm">${
+                        allFiles.length === 0
+                            ? 'Файлов пока нет. Перетащите файлы в зону загрузки выше.'
+                            : 'Ничего не найдено по вашему запросу.'
+                    }</div>`;
+                    return;
+                }
+
+                filesListContainer.innerHTML = filtered.map(file => {
+                    const dateStr = file.modified_at
+                        ? new Date(file.modified_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                        : '';
+                    return `
+                        <div class="py-3 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 hover:bg-slate-800/30 px-2 rounded-xl transition">
+                            <div class="flex items-center gap-3 min-w-0 flex-1">
+                                <div class="w-9 h-9 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 text-emerald-400">
+                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <div class="min-w-0">
+                                    <p class="text-sm font-medium text-slate-100 truncate" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</p>
+                                    <p class="text-xs text-slate-400 font-mono">${escapeHtml(file.size_human)} • ${dateStr}</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <a href="${encodeURI(file.download_url)}" download="${escapeHtml(file.name)}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-medium transition">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    Скачать
+                                </a>
+                                <button data-delete="${escapeHtml(file.name)}" type="button" title="Удалить файл" class="delete-file-btn p-1.5 rounded-lg bg-slate-800 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700 hover:border-rose-500/30 transition cursor-pointer">
+                                    <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            filesListContainer.addEventListener('click', async (e) => {
+                const btn = e.target.closest('.delete-file-btn');
+                if (!btn) return;
+                const filename = btn.getAttribute('data-delete');
+                if (!filename) return;
+                try {
+                    const res = await fetch(`/api/files/${encodeURIComponent(filename)}?room=${encodeURIComponent(room)}`, {
+                        method: 'DELETE'
+                    });
+                    if (!res.ok) throw new Error('Delete failed');
+                    showToast(`Удален: ${filename}`, 'info');
+                } catch {
+                    showToast('Не удалось удалить файл', 'error');
+                }
+            });
+
+            fileSearchInput.addEventListener('input', renderFiles);
+            refreshFilesBtn.addEventListener('click', () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'get_files' }));
+                } else {
+                    fetch('/api/files').then(r => r.json()).then(data => {
+                        allFiles = data;
+                        renderFiles();
+                    });
+                }
+            });
+
+            // File Upload with XMLHttpRequest progress
+            function uploadFiles(fileList) {
+                if (!fileList || fileList.length === 0) return;
+
+                const formData = new FormData();
+                let totalSize = 0;
+                const names = [];
+                for (const file of fileList) {
+                    formData.append('files', file);
+                    totalSize += file.size;
+                    names.push(file.name);
+                }
+
+                uploadProgressBox.classList.remove('hidden');
+                uploadFileName.textContent = names.length === 1 ? names[0] : `${names.length} файлов`;
+                uploadPercent.textContent = '0%';
+                uploadProgressBar.style.width = '0%';
+                uploadBytes.textContent = `0 B / ${formatBytes(totalSize)}`;
+                uploadStatus.textContent = 'Передача...';
+
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `/api/upload?room=${encodeURIComponent(room)}`);
+
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const pct = Math.round((event.loaded / event.total) * 100);
+                        uploadPercent.textContent = `${pct}%`;
+                        uploadProgressBar.style.width = `${pct}%`;
+                        uploadBytes.textContent = `${formatBytes(event.loaded)} / ${formatBytes(event.total)}`;
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        uploadPercent.textContent = '100%';
+                        uploadProgressBar.style.width = '100%';
+                        uploadStatus.textContent = 'Готово!';
+                        setTimeout(() => uploadProgressBox.classList.add('hidden'), 1800);
+                    } else {
+                        uploadStatus.textContent = 'Ошибка загрузки';
+                        showToast('Ошибка при загрузке файла', 'error');
+                    }
+                    fileInput.value = '';
+                };
+
+                xhr.onerror = () => {
+                    uploadStatus.textContent = 'Сбой сети';
+                    showToast('Сбой сети при загрузке', 'error');
+                    fileInput.value = '';
+                };
+
+                xhr.send(formData);
+            }
+
+            dropZone.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', (e) => uploadFiles(e.target.files));
+
+            ['dragenter', 'dragover'].forEach(evt => {
+                dropZone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.add('border-indigo-500', 'bg-indigo-500/10');
+                });
+            });
+
+            ['dragleave', 'drop'].forEach(evt => {
+                dropZone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropZone.classList.remove('border-indigo-500', 'bg-indigo-500/10');
+                });
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                uploadFiles(e.dataTransfer.files);
+            });
+
+            // Clipboard rendering & actions
+            function renderClipboardHistory() {
+                clipboardHistoryCount.textContent = `${clipboardHistory.length} записей`;
+
+                if (clipboardHistory.length === 0) {
+                    clipboardHistoryList.innerHTML = '<p class="text-xs text-slate-500 italic py-4 text-center">Буфер обмена пока пуст</p>';
+                    return;
+                }
+
+                const badgeColors = {
+                    url: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+                    json: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+                    code: 'bg-purple-500/15 text-purple-400 border-purple-500/30',
+                    text: 'bg-slate-700/50 text-slate-300 border-slate-600/40',
+                };
+
+                clipboardHistoryList.innerHTML = clipboardHistory.map((item, idx) => {
+                    const badgeClass = badgeColors[item.content_type] || badgeColors.text;
+                    const timeStr = item.timestamp
+                        ? new Date(item.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+                        : '';
+                    const isUrl = item.content_type === 'url';
+
+                    return `
+                        <div class="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/90 flex items-start justify-between gap-2.5">
+                            <div class="min-w-0 flex-1 space-y-1">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${badgeClass}">${escapeHtml(item.content_type)}</span>
+                                    <span class="text-[11px] text-slate-500 font-mono">${timeStr} • ${item.char_count} симв.</span>
+                                </div>
+                                <p class="text-xs text-slate-200 break-all line-clamp-2 font-mono">${escapeHtml(item.content)}</p>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                ${isUrl ? `<a href="${escapeHtml(item.content)}" target="_blank" rel="noopener noreferrer" class="px-2 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-[11px] font-medium transition">Открыть</a>` : ''}
+                                <button data-clip-idx="${idx}" type="button" class="copy-history-btn px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium border border-slate-700 transition cursor-pointer">
+                                    <span>Копировать</span>
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            clipboardHistoryList.addEventListener('click', (e) => {
+                const btn = e.target.closest('.copy-history-btn');
+                if (!btn) return;
+                const idx = Number(btn.getAttribute('data-clip-idx'));
+                const item = clipboardHistory[idx];
+                if (item) {
+                    copyTextToClipboard(item.content, btn);
+                }
+            });
+
+            function sendClipboardContent() {
+                const content = clipboardInput.value;
+                if (!content.trim()) {
+                    showToast('Введите текст перед отправкой', 'error');
+                    return;
+                }
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    showToast('Нет соединения с сервером', 'error');
+                    return;
+                }
+                ws.send(JSON.stringify({
+                    type: 'clipboard_send',
+                    content: content,
+                    sender_id: senderId
+                }));
+                showToast('Отправлено в общий буфер', 'success');
+            }
+
+            sendClipboardBtn.addEventListener('click', sendClipboardContent);
+            clipboardInput.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    sendClipboardContent();
+                }
+            });
+            copyInputBtn.addEventListener('click', () => copyTextToClipboard(clipboardInput.value, copyInputBtn));
+            clearClipboardInputBtn.addEventListener('click', () => { clipboardInput.value = ''; clipboardInput.focus(); });
+
+            // QR modal
+            qrOpenBtn.addEventListener('click', async () => {
+                qrModal.classList.remove('hidden');
+                try {
+                    const res = await fetch(`/api/info?room=${encodeURIComponent(room)}`);
+                    const info = await res.json();
+                    const portPart = window.location.port ? `:${window.location.port}` : '';
+                    const targetUrl = `http://${info.local_ip}${portPart}/?room=${encodeURIComponent(room)}`;
+                    qrUrlText.textContent = targetUrl;
+                    qrImage.src = `/api/qr?url=${encodeURIComponent(targetUrl)}`;
+                } catch {
+                    qrUrlText.textContent = window.location.href;
+                }
+            });
+            qrCloseBtn.addEventListener('click', () => qrModal.classList.add('hidden'));
+            qrModal.addEventListener('click', (e) => {
+                if (e.target === qrModal) qrModal.classList.add('hidden');
+            });
+
+            // Initialize WebSocket
+            connectWebSocket();
+        })();
+    </script>
+</body>
+</html>
